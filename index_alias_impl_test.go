@@ -1294,6 +1294,14 @@ func (i *stubIndex) SearchInContext(ctx context.Context, req *SearchRequest) (*S
 	return nil, i.err
 }
 
+func (i *stubIndex) PreflightSearchRequest(ctx context.Context,
+	req *SearchRequest) (*PreflightReport, error) {
+	if i.err != nil {
+		return nil, i.err
+	}
+	return &PreflightReport{Valid: true}, nil
+}
+
 func (i *stubIndex) Fields() ([]string, error) {
 	return nil, i.err
 }

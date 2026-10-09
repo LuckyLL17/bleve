@@ -489,6 +489,33 @@ func (i *indexImpl) Search(req *SearchRequest) (sr *SearchResult, err error) {
 	return i.SearchInContext(context.Background(), req)
 }
 
+// PreflightSearchRequest compiles the request against the mapping and index
+// capabilities without executing it, returning structured diagnostics.
+func (i *indexImpl) PreflightSearchRequest(ctx context.Context,
+	req *SearchRequest) (*PreflightReport, error) {
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return nil, ErrorIndexClosed
+	}
+
+	indexReader, err := i.i.Reader()
+	if err != nil {
+		return nil, fmt.Errorf("error opening index reader %v", err)
+	}
+	defer func() {
+		_ = indexReader.Close()
+	}()
+
+	compiler := newRequestCompiler(req, i.m, indexReader)
+	compiler.compile()
+	return &PreflightReport{
+		Valid:  len(compiler.issues) == 0,
+		Issues: compiler.issues,
+	}, nil
+}
+
 // returns the set of file callback writer ids in use by the index
 func (i *indexImpl) FileWriterIDsInUse() (map[string]struct{}, error) {
 	ids := map[string]struct{}{i.meta.fileReader.Id(): {}}
@@ -682,6 +709,14 @@ func (i *indexImpl) SearchInContext(ctx context.Context, req *SearchRequest) (sr
 			err = cerr
 		}
 	}()
+
+	// compile the request against the mapping and index capabilities
+	// before any execution work
+	compiler := newRequestCompiler(req, i.m, indexReader)
+	compiler.compile()
+	if err = fatalIssuesError(compiler.issues); err != nil {
+		return nil, err
+	}
 
 	// rescorer will be set if score fusion is supposed to happen
 	// at this alias (root alias), else will be nil

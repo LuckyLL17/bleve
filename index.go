@@ -259,6 +259,12 @@ type Index interface {
 	Search(req *SearchRequest) (*SearchResult, error)
 	SearchInContext(ctx context.Context, req *SearchRequest) (*SearchResult, error)
 
+	// PreflightSearchRequest compiles the SearchRequest against the index
+	// mapping and index capabilities without executing it, returning
+	// structured diagnostics located within the query, sort, facet,
+	// highlight or KNN sections.
+	PreflightSearchRequest(ctx context.Context, req *SearchRequest) (*PreflightReport, error)
+
 	Fields() ([]string, error)
 
 	FieldDict(field string) (index.FieldDict, error)

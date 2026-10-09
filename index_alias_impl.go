@@ -194,6 +194,88 @@ func (i *indexAliasImpl) Search(req *SearchRequest) (*SearchResult, error) {
 	return i.SearchInContext(context.Background(), req)
 }
 
+// PreflightSearchRequest compiles the request against the structural
+// validity of the request and every member index's mapping and capabilities,
+// without executing it. Member diagnostics are keyed by member index name.
+func (i *indexAliasImpl) PreflightSearchRequest(ctx context.Context,
+	req *SearchRequest) (*PreflightReport, error) {
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return nil, ErrorIndexClosed
+	}
+	if len(i.indexes) < 1 {
+		return nil, ErrorAliasEmpty
+	}
+
+	compiler := newRequestCompiler(req, nil, nil)
+	compiler.compile()
+	report := &PreflightReport{
+		Issues: compiler.issues,
+	}
+
+	type memberReport struct {
+		name   string
+		report *PreflightReport
+		err    error
+	}
+	results := make(chan *memberReport, len(i.indexes))
+	var waitGroup sync.WaitGroup
+	compileMember := func(in Index) {
+		member := memberReport{name: in.Name()}
+		member.report, member.err = in.PreflightSearchRequest(ctx,
+			copySearchRequest(req, nil))
+		results <- &member
+		waitGroup.Done()
+	}
+	waitGroup.Add(len(i.indexes))
+	for _, in := range i.indexes {
+		go compileMember(in)
+	}
+	go func() {
+		waitGroup.Wait()
+		close(results)
+	}()
+	for member := range results {
+		if member.err != nil {
+			if report.IndexErrors == nil {
+				report.IndexErrors = make(IndexErrMap)
+			}
+			report.IndexErrors[member.name] = member.err
+			continue
+		}
+		report.mergeMemberReport(member.name, member.report)
+	}
+	report.Valid = len(report.Issues) == 0 && !report.hasIssue() &&
+		len(report.IndexErrors) == 0
+	return report, nil
+}
+
+func (r *PreflightReport) mergeMemberReport(memberName string, member *PreflightReport) {
+	if len(member.IndexIssues) > 0 || len(member.IndexErrors) > 0 {
+		// nested alias: flatten its per-index diagnostics and errors
+		for indexName, issues := range member.IndexIssues {
+			if r.IndexIssues == nil {
+				r.IndexIssues = make(map[string][]*PreflightIssue)
+			}
+			r.IndexIssues[indexName] = append(r.IndexIssues[indexName], issues...)
+		}
+		for indexName, indexErr := range member.IndexErrors {
+			if r.IndexErrors == nil {
+				r.IndexErrors = make(IndexErrMap)
+			}
+			r.IndexErrors[indexName] = indexErr
+		}
+		return
+	}
+	if r.IndexIssues == nil {
+		r.IndexIssues = make(map[string][]*PreflightIssue)
+	}
+	r.IndexIssues[memberName] = append(r.IndexIssues[memberName],
+		member.Issues...)
+}
+
 func (i *indexAliasImpl) SearchInContext(ctx context.Context, req *SearchRequest) (*SearchResult, error) {
 	i.mutex.RLock()
 	defer i.mutex.RUnlock()
@@ -204,6 +286,14 @@ func (i *indexAliasImpl) SearchInContext(ctx context.Context, req *SearchRequest
 
 	if len(i.indexes) < 1 {
 		return nil, ErrorAliasEmpty
+	}
+
+	// apply the same request-level judgments before both the pre-search
+	// and the real search phases
+	compiler := newRequestCompiler(req, nil, nil)
+	compiler.compile()
+	if err := fatalIssuesError(compiler.issues); err != nil {
+		return nil, err
 	}
 
 	if _, ok := ctx.Value(search.PreSearchKey).(bool); ok {

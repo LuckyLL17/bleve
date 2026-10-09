@@ -322,56 +322,10 @@ func (h *HighlightRequest) AddField(field string) {
 }
 
 func (r *SearchRequest) Validate() error {
-	if srq, ok := r.Query.(query.ValidatableQuery); ok {
-		err := srq.Validate()
-		if err != nil {
-			return err
-		}
-	}
-
-	if r.SearchAfter != nil && r.SearchBefore != nil {
-		return fmt.Errorf("cannot use search after and search before together")
-	}
-
-	if r.SearchAfter != nil {
-		if r.From != 0 {
-			return fmt.Errorf("cannot use search after with from !=0")
-		}
-		if len(r.SearchAfter) != len(r.Sort) {
-			return fmt.Errorf("search after must have same size as sort order")
-		}
-	}
-	if r.SearchBefore != nil {
-		if r.From != 0 {
-			return fmt.Errorf("cannot use search before with from !=0")
-		}
-		if len(r.SearchBefore) != len(r.Sort) {
-			return fmt.Errorf("search before must have same size as sort order")
-		}
-	}
-
-	err := r.validatePagination()
-	if err != nil {
-		return err
-	}
-
-	if IsScoreFusionRequested(r) {
-		if r.SearchAfter != nil || r.SearchBefore != nil {
-			return fmt.Errorf("cannot use search after or search before with score fusion")
-		}
-
-		if r.Sort != nil {
-			if !reflect.DeepEqual(r.Sort, AllowedFusionSort) {
-				return fmt.Errorf("sort must be empty or descending order of score for score fusion")
-			}
-		}
-	}
-
-	err = validateKNN(r)
-	if err != nil {
-		return err
-	}
-	return r.Facets.Validate()
+	compiler := newRequestCompiler(r, nil, nil)
+	compiler.strict = true
+	compiler.compile()
+	return fatalIssuesError(compiler.issues)
 }
 
 // Validates SearchAfter/SearchBefore
