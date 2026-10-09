@@ -479,6 +479,13 @@ func DumpQuery(m mapping.IndexMapping, query Query) (string, error) {
 	return string(data), err
 }
 
+// ExpandQuery traverses the input query tree and returns a new tree where
+// query string queries have been expanded into base queries. Query tree
+// traversal does not depend on an index mapping, so none is required.
+func ExpandQuery(q Query) (Query, error) {
+	return expandQuery(nil, q)
+}
+
 // ExtractFields returns a set of fields referenced by the query.
 // The returned set may be nil if the query does not explicitly reference any field
 // and the DefaultSearchField is unset in the index mapping.

@@ -672,6 +672,13 @@ func (i *indexImpl) SearchInContext(ctx context.Context, req *SearchRequest) (sr
 		return nil, ErrorIndexClosed
 	}
 
+	// reuse an attached preflight judgment: when the report says this index
+	// cannot serve the request, fail before opening an index reader. With no
+	// attached report this is a no-op and the default semantics apply.
+	if err := enforcePreflight(ctx, []Index{i}); err != nil {
+		return nil, err
+	}
+
 	// open a reader for this search
 	indexReader, err := i.i.Reader()
 	if err != nil {

@@ -59,6 +59,14 @@ func (i *indexAliasImpl) VisitIndexes(visit func(Index)) {
 	i.mutex.RUnlock()
 }
 
+// leafIndexes returns every leaf index reachable from this alias, recursively
+// expanding any nested aliases.
+func (i *indexAliasImpl) leafIndexes() []Index {
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+	return collectLeafIndexes(i.indexes)
+}
+
 func (i *indexAliasImpl) isAliasToSingleIndex() error {
 	if len(i.indexes) < 1 {
 		return ErrorAliasEmpty
@@ -204,6 +212,14 @@ func (i *indexAliasImpl) SearchInContext(ctx context.Context, req *SearchRequest
 
 	if len(i.indexes) < 1 {
 		return nil, ErrorAliasEmpty
+	}
+
+	// when a preflight report is attached to the context, the search must
+	// reuse its judgment: fail fast before any phase of the search if a leaf
+	// index is (or has become) unable to serve the request. Without an
+	// attached report this is a no-op and the default semantics apply.
+	if err := enforcePreflight(ctx, i.indexes); err != nil {
+		return nil, err
 	}
 
 	if _, ok := ctx.Value(search.PreSearchKey).(bool); ok {
