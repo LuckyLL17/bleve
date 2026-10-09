@@ -36,6 +36,8 @@ type segmentIntroduction struct {
 	applied           chan error
 	persisted         chan error
 	persistedCallback index.BatchCallback
+
+	appliedEpoch uint64
 }
 
 type persistIntroduction struct {
@@ -255,6 +257,7 @@ func (s *Scorch) introduceSegment(next *segmentIntroduction) error {
 		s.unmarkIneligibleForRemoval(filename)
 	}
 
+	next.appliedEpoch = newSnapshot.epoch
 	close(next.applied)
 
 	return nil

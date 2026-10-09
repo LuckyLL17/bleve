@@ -17,6 +17,7 @@
 package upsidedown
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -65,6 +66,11 @@ type UpsideDownCouch struct {
 	docCount uint64
 
 	writeMutex sync.Mutex
+
+	epoch uint64 // monotonic visibility point, atomic access
+
+	epochMu     sync.Mutex
+	epochSignal chan struct{} // closed and replaced whenever epoch advances
 }
 
 type docBackIndexRow struct {
@@ -80,9 +86,42 @@ func NewUpsideDownCouch(storeName string, storeConfig map[string]interface{}, an
 		storeName:     storeName,
 		storeConfig:   storeConfig,
 		analysisQueue: analysisQueue,
+		epochSignal:   make(chan struct{}),
 	}
 	rv.stats = &indexStat{i: rv}
 	return rv, nil
+}
+
+// CurrentEpoch returns the latest visibility point.  Every successful
+// mutation advances the epoch, and a reader opened at that point
+// observes everything applied up to it.
+func (udc *UpsideDownCouch) CurrentEpoch() uint64 {
+	return atomic.LoadUint64(&udc.epoch)
+}
+
+// WaitForEpoch blocks until the visibility point reaches the requested
+// epoch or the context is cancelled.
+func (udc *UpsideDownCouch) WaitForEpoch(ctx context.Context, epoch uint64) error {
+	for atomic.LoadUint64(&udc.epoch) < epoch {
+		udc.epochMu.Lock()
+		wait := udc.epochSignal
+		udc.epochMu.Unlock()
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func (udc *UpsideDownCouch) advanceEpoch() uint64 {
+	e := atomic.AddUint64(&udc.epoch, 1)
+	udc.epochMu.Lock()
+	close(udc.epochSignal)
+	udc.epochSignal = make(chan struct{})
+	udc.epochMu.Unlock()
+	return e
 }
 
 func (udc *UpsideDownCouch) init(kvwriter store.KVWriter) (err error) {
@@ -503,6 +542,7 @@ func (udc *UpsideDownCouch) UpdateWithAnalysis(doc index.Document,
 	if err == nil {
 		atomic.AddUint64(&udc.stats.updates, 1)
 		atomic.AddUint64(&udc.stats.numPlainTextBytesIndexed, doc.NumPlainTextBytes())
+		udc.advanceEpoch()
 	} else {
 		atomic.AddUint64(&udc.stats.errors, 1)
 	}
@@ -695,6 +735,7 @@ func (udc *UpsideDownCouch) Delete(id string) (err error) {
 	atomic.AddUint64(&udc.stats.indexTime, uint64(time.Since(indexStart)))
 	if err == nil {
 		atomic.AddUint64(&udc.stats.deletes, 1)
+		udc.advanceEpoch()
 	} else {
 		atomic.AddUint64(&udc.stats.errors, 1)
 	}
@@ -791,7 +832,14 @@ func (udc *UpsideDownCouch) termFieldVectorsFromTermVectors(in []*TermVector) []
 	return rv
 }
 
-func (udc *UpsideDownCouch) Batch(batch *index.Batch) (err error) {
+func (udc *UpsideDownCouch) Batch(batch *index.Batch) error {
+	_, err := udc.BatchEpoch(batch)
+	return err
+}
+
+// BatchEpoch applies a batch of changes and returns the visibility
+// point containing the applied changes.
+func (udc *UpsideDownCouch) BatchEpoch(batch *index.Batch) (epoch uint64, err error) {
 	persistedCallback := batch.PersistedCallback()
 	if persistedCallback != nil {
 		defer persistedCallback(err)
@@ -929,7 +977,7 @@ func (udc *UpsideDownCouch) Batch(batch *index.Batch) (err error) {
 	}
 
 	if docBackIndexRowErr != nil {
-		return docBackIndexRowErr
+		return 0, docBackIndexRowErr
 	}
 
 	// start a writer for this batch
@@ -959,6 +1007,7 @@ func (udc *UpsideDownCouch) Batch(batch *index.Batch) (err error) {
 		atomic.AddUint64(&udc.stats.deletes, docsDeleted)
 		atomic.AddUint64(&udc.stats.batches, 1)
 		atomic.AddUint64(&udc.stats.numPlainTextBytesIndexed, numPlainTextBytes)
+		epoch = udc.advanceEpoch()
 	} else {
 		atomic.AddUint64(&udc.stats.errors, 1)
 	}

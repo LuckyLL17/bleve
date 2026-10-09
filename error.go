@@ -29,6 +29,8 @@ const (
 	ErrorTwoPhaseSearchInconsistency
 	ErrorSynonymSearchNotSupported
 	ErrorTrainingNotSupported
+	ErrorReceiptNotSupported
+	ErrorReceiptTargetMismatch
 )
 
 // Error represents a more strongly typed bleve error for detecting
@@ -52,4 +54,6 @@ var errorMessages = map[Error]string{
 	ErrorIndexReadInconsistency:      "index read inconsistency detected",
 	ErrorTwoPhaseSearchInconsistency: "2-phase search failed, likely due to an overlapping topology change",
 	ErrorSynonymSearchNotSupported:   "synonym search not supported",
+	ErrorReceiptNotSupported:         "index implementation does not support write receipts",
+	ErrorReceiptTargetMismatch:       "write receipt does not apply to this index",
 }

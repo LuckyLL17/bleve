@@ -501,7 +501,15 @@ func (s *Scorch) isTrained(batch *index.Batch) (bool, error) {
 }
 
 // Batch applices a batch of changes to the index atomically
-func (s *Scorch) Batch(batch *index.Batch) (err error) {
+func (s *Scorch) Batch(batch *index.Batch) error {
+	_, err := s.BatchEpoch(batch)
+	return err
+}
+
+// BatchEpoch applies a batch of changes atomically and returns the root
+// snapshot epoch that contains the applied changes.  Every new Reader()
+// opened once that epoch is current will observe the batch.
+func (s *Scorch) BatchEpoch(batch *index.Batch) (epoch uint64, err error) {
 	start := time.Now()
 
 	// notify handlers that we're about to index a batch of data
@@ -512,11 +520,11 @@ func (s *Scorch) Batch(batch *index.Batch) (err error) {
 
 	trained, err := s.isTrained(batch)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	if !trained {
-		return fmt.Errorf("index is not trained yet")
+		return 0, fmt.Errorf("index is not trained yet")
 	}
 
 	resultChan := make(chan index.Document, len(batch.IndexOps))
@@ -583,7 +591,7 @@ func (s *Scorch) Batch(batch *index.Batch) (err error) {
 	if len(analysisResults) > 0 {
 		newSegment, bufBytes, err = s.segPlugin.NewUsing(analysisResults, s.segmentConfig)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if segB, ok := newSegment.(segment.DiskStatsReporter); ok {
 			atomic.AddUint64(&s.stats.TotBytesWrittenAtIndexTime,
@@ -594,7 +602,7 @@ func (s *Scorch) Batch(batch *index.Batch) (err error) {
 		atomic.AddUint64(&s.stats.TotBatchesEmpty, 1)
 	}
 
-	err = s.prepareSegment(newSegment, ids, batch.InternalOps, batch.PersistedCallback())
+	epoch, err = s.prepareSegment(newSegment, ids, batch.InternalOps, batch.PersistedCallback())
 	if err != nil {
 		if newSegment != nil {
 			_ = newSegment.Close()
@@ -610,7 +618,7 @@ func (s *Scorch) Batch(batch *index.Batch) (err error) {
 	atomic.AddUint64(&s.iStats.newSegBufBytesRemoved, bufBytes)
 	atomic.AddUint64(&s.stats.TotIndexTime, uint64(time.Since(indexStart)))
 
-	return err
+	return epoch, err
 }
 
 func (s *Scorch) getInternal(key []byte) ([]byte, error) {
@@ -637,7 +645,7 @@ func (s *Scorch) Train(batch *index.Batch) error {
 }
 
 func (s *Scorch) prepareSegment(newSegment segment.Segment, ids []string,
-	internalOps map[string][]byte, persistedCallback index.BatchCallback) error {
+	internalOps map[string][]byte, persistedCallback index.BatchCallback) (uint64, error) {
 	// new introduction
 	introduction := &segmentIntroduction{
 		id:                atomic.AddUint64(&s.nextSegmentID, 1),
@@ -665,7 +673,7 @@ func (s *Scorch) prepareSegment(newSegment segment.Segment, ids []string,
 	for _, seg := range root.segment {
 		delta, err := seg.segment.DocNumbers(ids)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		introduction.obsoletes[seg.id] = delta
 	}
@@ -677,8 +685,9 @@ func (s *Scorch) prepareSegment(newSegment segment.Segment, ids []string,
 	// block until this segment is applied
 	err := <-introduction.applied
 	if err != nil {
-		return err
+		return 0, err
 	}
+	appliedEpoch := introduction.appliedEpoch
 
 	if introduction.persisted != nil {
 		err = <-introduction.persisted
@@ -690,7 +699,7 @@ func (s *Scorch) prepareSegment(newSegment segment.Segment, ids []string,
 		atomic.StoreUint64(&s.stats.MaxBatchIntroTime, introTime)
 	}
 
-	return err
+	return appliedEpoch, err
 }
 
 func (s *Scorch) SetInternal(key, val []byte) error {
@@ -719,6 +728,53 @@ func (s *Scorch) currentSnapshot() *IndexSnapshot {
 	}
 	s.rootLock.RUnlock()
 	return rv
+}
+
+// CurrentEpoch returns the epoch of the current root snapshot.  Readers
+// opened at this epoch observe every change applied up to this point,
+// including in-memory segment introductions, persisted snapshot swaps
+// and merges.
+func (s *Scorch) CurrentEpoch() uint64 {
+	s.rootLock.RLock()
+	rv := s.root.epoch
+	s.rootLock.RUnlock()
+	return rv
+}
+
+// WaitForEpoch blocks until the root snapshot reaches the requested
+// epoch, the context is cancelled or the index is closed.  The same
+// progress point is used whether the change is still held in an
+// in-memory segment or has already been persisted.
+func (s *Scorch) WaitForEpoch(ctx context.Context, epoch uint64) error {
+	s.rootLock.RLock()
+	curr := s.root.epoch
+	s.rootLock.RUnlock()
+	if curr >= epoch {
+		return nil
+	}
+
+	// the introducer closes a watcher once its epoch is below the
+	// current root epoch, so watching epoch-1 fires at curr >= epoch
+	w := &epochWatcher{
+		epoch:    epoch - 1,
+		notifyCh: make(notificationChan, 1),
+	}
+	select {
+	case s.introducerNotifier <- w:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closeCh:
+		return ErrClosed
+	}
+
+	select {
+	case <-w.notifyCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closeCh:
+		return ErrClosed
+	}
 }
 
 func (s *Scorch) Stats() json.Marshaler {

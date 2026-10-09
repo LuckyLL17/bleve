@@ -153,6 +153,67 @@ func (i *indexAliasImpl) Batch(b *Batch) error {
 	return i.indexes[0].Batch(b)
 }
 
+func (i *indexAliasImpl) IndexWithReceipt(id string,
+	data interface{}) (*WriteReceipt, error) {
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return nil, ErrorIndexClosed
+	}
+
+	err := i.isAliasToSingleIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	ri, ok := i.indexes[0].(ReceiptIndex)
+	if !ok {
+		return nil, ErrorReceiptNotSupported
+	}
+	return ri.IndexWithReceipt(id, data)
+}
+
+func (i *indexAliasImpl) DeleteWithReceipt(id string) (*WriteReceipt, error) {
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return nil, ErrorIndexClosed
+	}
+
+	err := i.isAliasToSingleIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	ri, ok := i.indexes[0].(ReceiptIndex)
+	if !ok {
+		return nil, ErrorReceiptNotSupported
+	}
+	return ri.DeleteWithReceipt(id)
+}
+
+func (i *indexAliasImpl) BatchWithReceipt(b *Batch) (*WriteReceipt, error) {
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return nil, ErrorIndexClosed
+	}
+
+	err := i.isAliasToSingleIndex()
+	if err != nil {
+		return nil, err
+	}
+
+	ri, ok := i.indexes[0].(ReceiptIndex)
+	if !ok {
+		return nil, ErrorReceiptNotSupported
+	}
+	return ri.BatchWithReceipt(b)
+}
+
 func (i *indexAliasImpl) Document(id string) (index.Document, error) {
 	i.mutex.RLock()
 	defer i.mutex.RUnlock()
@@ -325,6 +386,153 @@ func (i *indexAliasImpl) SearchInContext(ctx context.Context, req *SearchRequest
 	}
 	sr.Took += preSearchDuration
 	return sr, nil
+}
+
+// waitMemberPoint locates the named member within a member, which may
+// itself be a nested alias, and blocks until it reaches the point.
+// found is false when the member tree does not contain that name.
+func waitMemberPoint(ctx context.Context, in Index, name string,
+	epoch uint64) (found bool, err error) {
+	if a, ok := in.(*indexAliasImpl); ok {
+		a.mutex.RLock()
+		members := a.indexes
+		a.mutex.RUnlock()
+		for _, m := range members {
+			found, err = waitMemberPoint(ctx, m, name, epoch)
+			if err != nil || found {
+				return found, err
+			}
+		}
+		return false, nil
+	}
+	if in.Name() != name {
+		return false, nil
+	}
+	ri, ok := in.(ReceiptIndex)
+	if !ok {
+		return true, ErrorReceiptNotSupported
+	}
+	return true, ri.WaitForVisibility(ctx, newWriteReceipt(name, epoch))
+}
+
+// checkMemberPoint is the non-blocking counterpart of waitMemberPoint.
+func checkMemberPoint(in Index, name string, epoch uint64) (found,
+	visible bool, err error) {
+	if a, ok := in.(*indexAliasImpl); ok {
+		a.mutex.RLock()
+		members := a.indexes
+		a.mutex.RUnlock()
+		for _, m := range members {
+			found, visible, err = checkMemberPoint(m, name, epoch)
+			if err != nil || found {
+				return found, visible, err
+			}
+		}
+		return false, false, nil
+	}
+	if in.Name() != name {
+		return false, false, nil
+	}
+	ri, ok := in.(ReceiptIndex)
+	if !ok {
+		return true, false, ErrorReceiptNotSupported
+	}
+	visible, err = ri.IsVisible(newWriteReceipt(name, epoch))
+	return true, visible, err
+}
+
+func (i *indexAliasImpl) forEachReceiptPoint(r *WriteReceipt,
+	visit func(name string, epoch uint64) error) error {
+	names := make([]string, 0, len(r.Points))
+	for name := range r.Points {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := visit(name, r.Points[name]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WaitForVisibility blocks until every receipt point is reached by the
+// corresponding member, possibly within nested aliases.
+func (i *indexAliasImpl) WaitForVisibility(ctx context.Context,
+	r *WriteReceipt) error {
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return ErrorIndexClosed
+	}
+	if len(i.indexes) < 1 {
+		return ErrorAliasEmpty
+	}
+
+	return i.forEachReceiptPoint(r, func(name string, epoch uint64) error {
+		for _, m := range i.indexes {
+			found, err := waitMemberPoint(ctx, m, name, epoch)
+			if err != nil {
+				return err
+			}
+			if found {
+				return nil
+			}
+		}
+		return ErrorReceiptTargetMismatch
+	})
+}
+
+// IsVisible reports, without blocking, whether every receipt point is
+// reached by the corresponding member.
+func (i *indexAliasImpl) IsVisible(r *WriteReceipt) (bool, error) {
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return false, ErrorIndexClosed
+	}
+	if len(i.indexes) < 1 {
+		return false, ErrorAliasEmpty
+	}
+
+	var allVisible = true
+	err := i.forEachReceiptPoint(r, func(name string, epoch uint64) error {
+		for _, m := range i.indexes {
+			found, visible, err := checkMemberPoint(m, name, epoch)
+			if err != nil {
+				return err
+			}
+			if found {
+				if !visible {
+					allVisible = false
+				}
+				return nil
+			}
+		}
+		return ErrorReceiptTargetMismatch
+	})
+	if err != nil {
+		return false, err
+	}
+	return allVisible, nil
+}
+
+// SearchWithReceipt waits for the receipt points and then searches.
+func (i *indexAliasImpl) SearchWithReceipt(req *SearchRequest,
+	r *WriteReceipt) (*SearchResult, error) {
+	return i.SearchInContextWithReceipt(context.Background(), req, r)
+}
+
+// SearchInContextWithReceipt waits for the receipt points and then
+// searches within the context.
+func (i *indexAliasImpl) SearchInContextWithReceipt(ctx context.Context,
+	req *SearchRequest, r *WriteReceipt) (*SearchResult, error) {
+	if err := i.WaitForVisibility(ctx, r); err != nil {
+		return nil, err
+	}
+	return i.SearchInContext(ctx, req)
 }
 
 func (i *indexAliasImpl) Fields() ([]string, error) {
