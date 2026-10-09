@@ -17,7 +17,9 @@ package bleve
 import (
 	"context"
 	"fmt"
+	"strconv"
 
+	"github.com/blevesearch/bleve/v2/index/scorch"
 	"github.com/blevesearch/bleve/v2/index/upsidedown"
 
 	"github.com/blevesearch/bleve/v2/document"
@@ -36,8 +38,15 @@ type Batch struct {
 	index    Index
 	internal *index.Batch
 
+	conditions map[string]uint64
+
 	lastDocSize uint64
 	totalSize   uint64
+}
+
+func newVersionField(newVersion uint64) document.Field {
+	return document.NewTextFieldCustom(scorch.VersionField, nil,
+		[]byte(strconv.FormatUint(newVersion, 10)), index.StoreField, nil)
 }
 
 // Index adds the specified index operation to the
@@ -122,6 +131,53 @@ func (b *Batch) Delete(id string) {
 	}
 }
 
+// IndexWithVersion adds a version-conditional index operation to the
+// batch. The document is written only when its current version equals
+// expectedVersion; the written document records newVersion. An
+// expectedVersion of 0 means the document must not currently exist.
+// NOTE: the bleve Index is not updated until the batch is executed.
+func (b *Batch) IndexWithVersion(id string, data interface{},
+	expectedVersion, newVersion uint64) error {
+	if id == "" {
+		return ErrorEmptyID
+	}
+	if eventIndex, ok := b.index.(index.EventIndex); ok {
+		eventIndex.FireIndexEvent()
+	}
+	doc := document.NewDocument(id)
+	err := b.index.Mapping().MapDocument(doc, data)
+	if err != nil {
+		return err
+	}
+	doc.AddField(newVersionField(newVersion))
+	b.internal.Update(doc)
+	if b.conditions == nil {
+		b.conditions = make(map[string]uint64)
+	}
+	b.conditions[id] = expectedVersion
+
+	b.lastDocSize = uint64(doc.Size() +
+		len(id) + size.SizeOfString) // overhead from internal
+	b.totalSize += b.lastDocSize
+
+	return nil
+}
+
+// DeleteWithVersion adds a version-conditional delete operation to
+// the batch. The document is deleted only when its current version
+// equals expectedVersion.
+// NOTE: the bleve Index is not updated until the batch is executed.
+func (b *Batch) DeleteWithVersion(id string, expectedVersion uint64) {
+	if id == "" {
+		return
+	}
+	b.internal.Delete(id)
+	if b.conditions == nil {
+		b.conditions = make(map[string]uint64)
+	}
+	b.conditions[id] = expectedVersion
+}
+
 // SetInternal adds the specified set internal
 // operation to the batch. NOTE: the bleve Index is
 // not updated until the batch is executed.
@@ -152,6 +208,7 @@ func (b *Batch) String() string {
 // be reused in the future.
 func (b *Batch) Reset() {
 	b.internal.Reset()
+	b.conditions = make(map[string]uint64)
 	b.lastDocSize = 0
 	b.totalSize = 0
 }
@@ -159,6 +216,12 @@ func (b *Batch) Reset() {
 func (b *Batch) Merge(o *Batch) {
 	if o != nil && o.internal != nil {
 		b.internal.Merge(o.internal)
+		for k, v := range o.conditions {
+			if b.conditions == nil {
+				b.conditions = make(map[string]uint64)
+			}
+			b.conditions[k] = v
+		}
 		if o.LastDocSize() > 0 {
 			b.lastDocSize = o.LastDocSize()
 		}
@@ -283,6 +346,25 @@ type Index interface {
 
 	// Advanced returns the internal index implementation
 	Advanced() (index.Index, error)
+}
+
+// VersionedIndex is implemented by indexes which support
+// version-conditional mutations for optimistic concurrency control.
+// Version 0 represents a document which does not exist, so callers
+// create a document by expecting version 0. Versions are assigned
+// by the caller and persist with the document across close/reopen
+// cycles and background merges.
+type VersionedIndex interface {
+	Index
+	// IndexWithVersion writes data only when the document's current
+	// version equals expectedVersion, recording newVersion on the doc.
+	IndexWithVersion(id string, data interface{}, expectedVersion, newVersion uint64) error
+	// DeleteWithVersion removes the document only when its current
+	// version equals expectedVersion.
+	DeleteWithVersion(id string, expectedVersion uint64) error
+	// Version returns the current version of a document and whether
+	// a live document with that ID exists.
+	Version(id string) (version uint64, exists bool, err error)
 }
 
 // New index at the specified path, must not exist.

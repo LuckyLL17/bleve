@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -491,6 +492,46 @@ func (is *IndexSnapshot) DocCount() (uint64, error) {
 		rv += segment.CountRoot()
 	}
 	return rv, nil
+}
+
+// docVersion returns the persisted version of the document with the
+// given external ID. exists is false when no live document has that ID;
+// hasVersion is false when a live document exists but predates versioning
+// and therefore has no VersionField.
+func (is *IndexSnapshot) docVersion(id string) (version uint64, exists, hasVersion bool, err error) {
+	for _, seg := range is.segment {
+		nums, err := seg.DocNumbers([]string{id})
+		if err != nil {
+			return 0, false, false, err
+		}
+		if nums.IsEmpty() {
+			continue
+		}
+		itr := nums.Iterator()
+		for itr.HasNext() {
+			localDocNum := uint64(itr.Next())
+			exists = true
+			err = seg.VisitDocument(localDocNum,
+				func(name string, typ byte, val []byte, pos []uint64) bool {
+					if name != VersionField {
+						return true
+					}
+					hasVersion = true
+					parsed, perr := strconv.ParseUint(string(val), 10, 64)
+					if perr != nil {
+						err = perr
+						return false
+					}
+					version = parsed
+					return false
+				})
+			if err != nil {
+				return 0, false, false, err
+			}
+			return version, exists, hasVersion, nil
+		}
+	}
+	return 0, false, false, nil
 }
 
 func (is *IndexSnapshot) Document(id string) (rv index.Document, err error) {

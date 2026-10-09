@@ -16,6 +16,7 @@ package bleve
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -427,7 +428,126 @@ func (i *indexImpl) Batch(b *Batch) error {
 		return ErrorIndexClosed
 	}
 
-	return i.i.Batch(b.internal)
+	return i.applyBatchLocked(b)
+}
+
+func (i *indexImpl) applyBatchLocked(b *Batch) error {
+	if len(b.conditions) == 0 {
+		return i.i.Batch(b.internal)
+	}
+	vi, ok := i.i.(scorch.VersionedBatchIndex)
+	if !ok {
+		return fmt.Errorf("index implementation does not support version conditions")
+	}
+	return convertConflicts(vi.BatchWithConditions(b.internal, b.conditions))
+}
+
+func convertConflicts(err error) error {
+	if err == nil {
+		return nil
+	}
+	var engineConflicts scorch.VersionConflictErrors
+	if errors.As(err, &engineConflicts) {
+		conflicts := make(VersionConflictErrors, 0, len(engineConflicts))
+		for _, c := range engineConflicts {
+			conflicts = append(conflicts, &VersionConflictError{
+				DocID: c.DocID, Expected: c.Expected, Current: c.Current,
+			})
+		}
+		return conflicts
+	}
+	return err
+}
+
+// IndexWithVersion writes the document only when its current version
+// equals expectedVersion, recording newVersion on the written document.
+func (i *indexImpl) IndexWithVersion(id string, data interface{},
+	expectedVersion, newVersion uint64) error {
+	if id == "" {
+		return ErrorEmptyID
+	}
+
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return ErrorIndexClosed
+	}
+
+	b := i.NewBatch()
+	err := b.IndexWithVersion(id, data, expectedVersion, newVersion)
+	if err != nil {
+		return err
+	}
+	return i.applyBatchLocked(b)
+}
+
+// DeleteWithVersion removes the document only when its current version
+// equals expectedVersion.
+func (i *indexImpl) DeleteWithVersion(id string, expectedVersion uint64) error {
+	if id == "" {
+		return ErrorEmptyID
+	}
+
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return ErrorIndexClosed
+	}
+
+	b := i.NewBatch()
+	b.DeleteWithVersion(id, expectedVersion)
+	return i.applyBatchLocked(b)
+}
+
+// Version returns the persisted version of the document and whether a
+// live document with that ID exists.
+func (i *indexImpl) Version(id string) (uint64, bool, error) {
+	if id == "" {
+		return 0, false, ErrorEmptyID
+	}
+
+	i.mutex.RLock()
+	defer i.mutex.RUnlock()
+
+	if !i.open {
+		return 0, false, ErrorIndexClosed
+	}
+
+	indexReader, err := i.i.Reader()
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() {
+		if cerr := indexReader.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
+
+	doc, err := indexReader.Document(id)
+	if err != nil {
+		return 0, false, err
+	}
+	if doc == nil {
+		return 0, false, nil
+	}
+
+	var version uint64
+	doc.VisitFields(func(f index.Field) {
+		if f.Name() != scorch.VersionField {
+			return
+		}
+		textField, ok := f.(index.TextField)
+		if !ok {
+			return
+		}
+		parsed, perr := strconv.ParseUint(textField.Text(), 10, 64)
+		if perr == nil {
+			version = parsed
+		}
+	})
+	return version, true, nil
 }
 
 // Document is used to find the values of all the
@@ -1415,8 +1535,9 @@ func (i *indexImpl) DeleteInternal(key []byte) error {
 // NewBatch creates a new empty batch.
 func (i *indexImpl) NewBatch() *Batch {
 	return &Batch{
-		index:    i,
-		internal: index.NewBatch(),
+		index:      i,
+		internal:   index.NewBatch(),
+		conditions: make(map[string]uint64),
 	}
 }
 

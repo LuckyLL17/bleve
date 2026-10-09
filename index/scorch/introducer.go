@@ -17,6 +17,7 @@ package scorch
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"sync/atomic"
 
 	"github.com/RoaringBitmap/roaring/v2"
@@ -27,11 +28,12 @@ import (
 const introducer = "introducer"
 
 type segmentIntroduction struct {
-	id        uint64
-	data      segment.Segment
-	obsoletes map[uint64]*roaring.Bitmap
-	ids       []string
-	internal  map[string][]byte
+	id         uint64
+	data       segment.Segment
+	obsoletes  map[uint64]*roaring.Bitmap
+	ids        []string
+	internal   map[string][]byte
+	conditions map[string]uint64
 
 	applied           chan error
 	persisted         chan error
@@ -115,6 +117,42 @@ func (s *Scorch) introduceSegment(next *segmentIntroduction) error {
 	s.rootLock.RUnlock()
 
 	defer func() { _ = root.DecRef() }()
+
+	// enforce every version condition atomically, before mutating the
+	// index; any mismatch rejects the entire introduction
+	if len(next.conditions) > 0 {
+		var conflicts VersionConflictErrors
+		for docID, expected := range next.conditions {
+			current, exists, hasVersion, err := root.docVersion(docID)
+			if err != nil {
+				next.applied <- fmt.Errorf("error reading version for %q: %v", docID, err)
+				close(next.applied)
+				return err
+			}
+			var conflict bool
+			switch {
+			case !exists:
+				conflict = expected != 0
+			case !hasVersion:
+				conflict = true
+			default:
+				conflict = current != expected
+			}
+			if conflict {
+				conflicts = append(conflicts, &VersionConflictError{
+					DocID: docID, Expected: expected, Current: current,
+				})
+			}
+		}
+		if len(conflicts) > 0 {
+			sort.Slice(conflicts, func(i, j int) bool {
+				return conflicts[i].DocID < conflicts[j].DocID
+			})
+			next.applied <- conflicts
+			close(next.applied)
+			return conflicts
+		}
+	}
 
 	nsegs := len(root.segment)
 

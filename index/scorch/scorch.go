@@ -41,6 +41,50 @@ const Version uint8 = 2
 
 var ErrClosed = fmt.Errorf("scorch closed")
 
+// VersionField is the reserved stored field which persists the
+// caller-supplied document version. It is stored but not indexed,
+// and survives persistence, close/reopen cycles and segment merges.
+const VersionField = "_version"
+
+// ErrVersionConflict is the sentinel error returned when one or more
+// version-conditional mutations cannot be applied because the current
+// document versions no longer match the expected versions.
+var ErrVersionConflict = fmt.Errorf("version conflict")
+
+// VersionConflictError describes a single failed version-conditional
+// mutation, identifying the document and the expected/current versions.
+type VersionConflictError struct {
+	DocID    string
+	Expected uint64
+	Current  uint64
+}
+
+func (e *VersionConflictError) Error() string {
+	return fmt.Sprintf("version conflict for document %q: expected version %d, current version %d",
+		e.DocID, e.Expected, e.Current)
+}
+
+// VersionConflictErrors is the collection of per-document conflicts
+// which caused an entire conditional batch to be rejected.
+type VersionConflictErrors []*VersionConflictError
+
+func (errs VersionConflictErrors) Error() string {
+	return fmt.Sprintf("version conflicts on %d document(s)", len(errs))
+}
+
+func (errs VersionConflictErrors) Unwrap() error {
+	return ErrVersionConflict
+}
+
+// VersionedBatchIndex is the optional interface implemented by index
+// implementations which support version-conditional batch mutations.
+type VersionedBatchIndex interface {
+	// BatchWithConditions applies the batch atomically. The conditions map
+	// associates document IDs with the version expected to be current.
+	// The whole batch is rejected when any condition does not match.
+	BatchWithConditions(batch *index.Batch, conditions map[string]uint64) error
+}
+
 type Scorch struct {
 	nextSegmentID uint64
 	stats         Stats
@@ -500,8 +544,16 @@ func (s *Scorch) isTrained(batch *index.Batch) (bool, error) {
 	return trained, nil
 }
 
-// Batch applices a batch of changes to the index atomically
-func (s *Scorch) Batch(batch *index.Batch) (err error) {
+func (s *Scorch) Batch(batch *index.Batch) error {
+	return s.batch(batch, nil)
+}
+
+func (s *Scorch) BatchWithConditions(batch *index.Batch, conditions map[string]uint64) error {
+	return s.batch(batch, conditions)
+}
+
+// batch applices a batch of changes to the index atomically
+func (s *Scorch) batch(batch *index.Batch, conditions map[string]uint64) (err error) {
 	start := time.Now()
 
 	// notify handlers that we're about to index a batch of data
@@ -594,7 +646,7 @@ func (s *Scorch) Batch(batch *index.Batch) (err error) {
 		atomic.AddUint64(&s.stats.TotBatchesEmpty, 1)
 	}
 
-	err = s.prepareSegment(newSegment, ids, batch.InternalOps, batch.PersistedCallback())
+	err = s.prepareSegment(newSegment, ids, batch.InternalOps, batch.PersistedCallback(), conditions)
 	if err != nil {
 		if newSegment != nil {
 			_ = newSegment.Close()
@@ -637,13 +689,15 @@ func (s *Scorch) Train(batch *index.Batch) error {
 }
 
 func (s *Scorch) prepareSegment(newSegment segment.Segment, ids []string,
-	internalOps map[string][]byte, persistedCallback index.BatchCallback) error {
+	internalOps map[string][]byte, persistedCallback index.BatchCallback,
+	conditions map[string]uint64) error {
 	// new introduction
 	introduction := &segmentIntroduction{
 		id:                atomic.AddUint64(&s.nextSegmentID, 1),
 		data:              newSegment,
 		ids:               ids,
 		internal:          internalOps,
+		conditions:        conditions,
 		applied:           make(chan error),
 		persistedCallback: persistedCallback,
 	}

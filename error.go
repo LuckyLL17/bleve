@@ -14,6 +14,8 @@
 
 package bleve
 
+import "fmt"
+
 // Constant Error values which can be compared to determine the type of error
 const (
 	ErrorIndexPathExists Error = iota
@@ -29,7 +31,41 @@ const (
 	ErrorTwoPhaseSearchInconsistency
 	ErrorSynonymSearchNotSupported
 	ErrorTrainingNotSupported
+	ErrorVersionConflict
 )
+
+// VersionConflictError describes a single version-conditional mutation
+// which could not be applied because the document's current version no
+// longer matched the expected version.
+type VersionConflictError struct {
+	DocID    string
+	Expected uint64
+	Current  uint64
+}
+
+func (e *VersionConflictError) Error() string {
+	return fmt.Sprintf("version conflict for document %q: expected version %d, current version %d",
+		e.DocID, e.Expected, e.Current)
+}
+
+func (e *VersionConflictError) Is(target error) bool {
+	t, ok := target.(Error)
+	return ok && t == ErrorVersionConflict
+}
+
+// VersionConflictErrors is returned when a version-conditional batch
+// contains one or more documents whose expected versions did not match.
+// The batch is atomic, so none of its operations are applied.
+type VersionConflictErrors []*VersionConflictError
+
+func (errs VersionConflictErrors) Error() string {
+	return fmt.Sprintf("version conflicts on %d document(s)", len(errs))
+}
+
+func (errs VersionConflictErrors) Is(target error) bool {
+	t, ok := target.(Error)
+	return ok && t == ErrorVersionConflict
+}
 
 // Error represents a more strongly typed bleve error for detecting
 // and handling specific types of errors.
@@ -52,4 +88,5 @@ var errorMessages = map[Error]string{
 	ErrorIndexReadInconsistency:      "index read inconsistency detected",
 	ErrorTwoPhaseSearchInconsistency: "2-phase search failed, likely due to an overlapping topology change",
 	ErrorSynonymSearchNotSupported:   "synonym search not supported",
+	ErrorVersionConflict:             "document version conflict",
 }
