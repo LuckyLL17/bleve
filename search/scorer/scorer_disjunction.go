@@ -78,6 +78,7 @@ func (s *DisjunctionQueryScorer) Score(ctx *search.SearchContext, constituents [
 	rv.Expl = newExpl
 	rv.FieldTermLocations = search.MergeFieldTermLocations(
 		rv.FieldTermLocations, constituents[1:])
+	rv.MergeHitNamesFrom(constituents[1:]...)
 
 	return rv
 }
@@ -119,5 +120,6 @@ func (s *DisjunctionQueryScorer) ScoreAndExplBreakdown(ctx *search.SearchContext
 	rv.Expl = explBreakdown
 	rv.FieldTermLocations = search.MergeFieldTermLocations(
 		rv.FieldTermLocations, constituents[1:])
+	rv.MergeHitNamesFrom(constituents[1:]...)
 	return rv
 }

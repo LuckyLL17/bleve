@@ -27,6 +27,7 @@ type PrefixQuery struct {
 	Prefix   string `json:"prefix"`
 	FieldVal string `json:"field,omitempty"`
 	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewPrefixQuery creates a new Query which finds
@@ -60,5 +61,6 @@ func (q *PrefixQuery) Searcher(ctx context.Context, i index.IndexReader, m mappi
 	if q.FieldVal == "" {
 		field = m.DefaultSearchField()
 	}
-	return searcher.NewTermPrefixSearcher(ctx, i, q.Prefix, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewTermPrefixSearcher(ctx, i, q.Prefix, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }

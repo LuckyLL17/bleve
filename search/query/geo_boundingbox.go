@@ -31,6 +31,7 @@ type GeoBoundingBoxQuery struct {
 	BottomRight []float64 `json:"bottom_right,omitempty"`
 	FieldVal    string    `json:"field,omitempty"`
 	BoostVal    *Boost    `json:"boost,omitempty"`
+	NameMixin
 }
 
 func NewGeoBoundingBoxQuery(topLeftLon, topLeftLat, bottomRightLon, bottomRightLat float64) *GeoBoundingBoxQuery {
@@ -78,10 +79,14 @@ func (q *GeoBoundingBoxQuery) Searcher(ctx context.Context, i index.IndexReader,
 			return nil, err
 		}
 
-		return searcher.NewDisjunctionSearcher(ctx, i, []search.Searcher{leftSearcher, rightSearcher}, 0, options)
+		dsr, dErr := searcher.NewDisjunctionSearcher(ctx, i,
+			[]search.Searcher{leftSearcher, rightSearcher}, 0, options)
+		return namedSearcher(dsr, dErr, q.NameVal)
 	}
 
-	return searcher.NewGeoBoundingBoxSearcher(ctx, i, q.TopLeft[0], q.BottomRight[1], q.BottomRight[0], q.TopLeft[1], field, q.BoostVal.Value(), options, true)
+	sr, err := searcher.NewGeoBoundingBoxSearcher(ctx, i, q.TopLeft[0], q.BottomRight[1],
+		q.BottomRight[0], q.TopLeft[1], field, q.BoostVal.Value(), options, true)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *GeoBoundingBoxQuery) Validate() error {
@@ -97,6 +102,7 @@ func (q *GeoBoundingBoxQuery) UnmarshalJSON(data []byte) error {
 		BottomRight interface{} `json:"bottom_right,omitempty"`
 		FieldVal    string      `json:"field,omitempty"`
 		BoostVal    *Boost      `json:"boost,omitempty"`
+		Name        string      `json:"name,omitempty"`
 	}{}
 	err := util.UnmarshalJSON(data, &tmp)
 	if err != nil {
@@ -115,5 +121,6 @@ func (q *GeoBoundingBoxQuery) UnmarshalJSON(data []byte) error {
 	q.BottomRight = []float64{lon, lat}
 	q.FieldVal = tmp.FieldVal
 	q.BoostVal = tmp.BoostVal
+	q.NameVal = tmp.Name
 	return nil
 }

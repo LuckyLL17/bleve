@@ -31,6 +31,7 @@ type TermRangeQuery struct {
 	InclusiveMax *bool  `json:"inclusive_max,omitempty"`
 	FieldVal     string `json:"field,omitempty"`
 	BoostVal     *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewTermRangeQuery creates a new Query for ranges
@@ -85,7 +86,9 @@ func (q *TermRangeQuery) Searcher(ctx context.Context, i index.IndexReader, m ma
 	if q.Max != "" {
 		maxTerm = []byte(q.Max)
 	}
-	return searcher.NewTermRangeSearcher(ctx, i, minTerm, maxTerm, q.InclusiveMin, q.InclusiveMax, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewTermRangeSearcher(ctx, i, minTerm, maxTerm, q.InclusiveMin,
+		q.InclusiveMax, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *TermRangeQuery) Validate() error {

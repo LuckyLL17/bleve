@@ -30,6 +30,7 @@ import (
 type CustomScoreQuery struct {
 	Query  Query    `json:"query"`
 	Fields []string `json:"fields,omitempty"`
+	NameMixin
 
 	scoreFunc searcher.CustomScoreFunc
 	payload   map[string]interface{}
@@ -92,7 +93,8 @@ func (q *CustomScoreQuery) Searcher(ctx context.Context, i index.IndexReader, m 
 		fieldTypes = resolveFieldTypes(fields, m)
 	}
 
-	return searcher.NewCustomScoreSearcher(ctx, childSearcher, q.scoreFunc, dvReader, i, fieldTypes, options.Explain), nil
+	return namedSearcher(searcher.NewCustomScoreSearcher(ctx, childSearcher,
+		q.scoreFunc, dvReader, i, fieldTypes, options.Explain), nil, q.NameVal)
 }
 
 func (q *CustomScoreQuery) Validate() error {
@@ -112,7 +114,7 @@ func (q *CustomScoreQuery) Validate() error {
 }
 
 func (q *CustomScoreQuery) MarshalJSON() ([]byte, error) {
-	inner := make(map[string]interface{}, len(q.payload)+2)
+	inner := make(map[string]interface{}, len(q.payload)+3)
 	for k, v := range q.payload {
 		inner[k] = v
 	}
@@ -120,18 +122,22 @@ func (q *CustomScoreQuery) MarshalJSON() ([]byte, error) {
 	if len(q.Fields) > 0 {
 		inner["fields"] = q.Fields
 	}
+	if q.NameVal != "" {
+		inner["name"] = q.NameVal
+	}
 	return json.Marshal(map[string]interface{}{
 		"custom_score": inner,
 	})
 }
 
 func (q *CustomScoreQuery) UnmarshalJSON(data []byte) error {
-	child, fields, payload, err := unmarshalCustomQueryPayload(data, "custom_score")
+	child, fields, name, payload, err := unmarshalCustomQueryPayload(data, "custom_score")
 	if err != nil {
 		return err
 	}
 	q.Query = child
 	q.Fields = fields
+	q.NameVal = name
 	q.payload = payload
 	return nil
 }

@@ -26,8 +26,9 @@ import (
 )
 
 type ConjunctionQuery struct {
-	Conjuncts       []Query `json:"conjuncts"`
-	BoostVal        *Boost  `json:"boost,omitempty"`
+	Conjuncts []Query `json:"conjuncts"`
+	BoostVal  *Boost  `json:"boost,omitempty"`
+	NameMixin
 	queryStringMode bool
 }
 
@@ -97,9 +98,11 @@ func (q *ConjunctionQuery) Searcher(ctx context.Context, i index.IndexReader, m 
 	}
 
 	if len(ss) < 1 {
-		return searcher.NewMatchNoneSearcher(i)
+		sr, err := searcher.NewMatchNoneSearcher(i)
+		return namedSearcher(sr, err, q.NameVal)
 	}
 
+	var rv search.Searcher
 	if nestedMode {
 		// first determine the nested depth info for the query fields
 		commonDepth, maxDepth := nm.NestedDepth(qfs)
@@ -113,11 +116,13 @@ func (q *ConjunctionQuery) Searcher(ctx context.Context, i index.IndexReader, m 
 			commonDepth = 0
 		}
 		if commonDepth < maxDepth {
-			return searcher.NewNestedConjunctionSearcher(ctx, i, ss, commonDepth, options)
+			rv, err = searcher.NewNestedConjunctionSearcher(ctx, i, ss, commonDepth, options)
+			return namedSearcher(rv, err, q.NameVal)
 		}
 	}
 
-	return searcher.NewConjunctionSearcher(ctx, i, ss, options)
+	rv, err = searcher.NewConjunctionSearcher(ctx, i, ss, options)
+	return namedSearcher(rv, err, q.NameVal)
 }
 
 func (q *ConjunctionQuery) Validate() error {
@@ -136,6 +141,7 @@ func (q *ConjunctionQuery) UnmarshalJSON(data []byte) error {
 	tmp := struct {
 		Conjuncts []json.RawMessage `json:"conjuncts"`
 		Boost     *Boost            `json:"boost,omitempty"`
+		Name      string            `json:"name,omitempty"`
 	}{}
 	err := util.UnmarshalJSON(data, &tmp)
 	if err != nil {
@@ -150,5 +156,6 @@ func (q *ConjunctionQuery) UnmarshalJSON(data []byte) error {
 		q.Conjuncts[i] = query
 	}
 	q.BoostVal = tmp.Boost
+	q.NameVal = tmp.Name
 	return nil
 }

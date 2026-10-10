@@ -481,6 +481,8 @@ func setKnnHitsInCollector(knnHits []*search.DocumentMatch, coll *collector.TopN
 			ftsMatch.Score += knnMatch.Score
 			// Combine the FTS explanation with the KNN explanation, if present
 			ftsMatch.Expl = ftsMatch.Expl.MergeWith(knnMatch.Expl)
+			// Combine the named clauses matched by either side
+			ftsMatch.MergeHitNamesFrom(knnMatch)
 		}
 		coll.SetKNNHits(knnHits, search.HybridMergeCallbackFn(mergeFn))
 	}

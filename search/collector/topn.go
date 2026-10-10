@@ -152,6 +152,8 @@ func newTopNCollector(size int, skip int, sort search.SortOrder, nr index.Nested
 			parent.Expl = parent.Expl.MergeWith(child.Expl)
 			// merge field term locations
 			parent.FieldTermLocations = search.MergeFieldTermLocationsFromMatch(parent.FieldTermLocations, child)
+			// merge the names of named clauses matched by the descendant
+			parent.MergeHitNamesFrom(child)
 			// add child's ID to parent's Descendants
 			// add other as descendant only if it is not the same document
 			if !parent.IndexInternalID.Equals(child.IndexInternalID) {

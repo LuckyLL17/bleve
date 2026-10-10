@@ -31,6 +31,7 @@ type GeoDistanceQuery struct {
 	Distance string    `json:"distance,omitempty"`
 	FieldVal string    `json:"field,omitempty"`
 	BoostVal *Boost    `json:"boost,omitempty"`
+	NameMixin
 }
 
 func NewGeoDistanceQuery(lon, lat float64, distance string) *GeoDistanceQuery {
@@ -71,8 +72,9 @@ func (q *GeoDistanceQuery) Searcher(ctx context.Context, i index.IndexReader, m 
 		return nil, err
 	}
 
-	return searcher.NewGeoPointDistanceSearcher(ctx, i, q.Location[0], q.Location[1],
+	sr, err := searcher.NewGeoPointDistanceSearcher(ctx, i, q.Location[0], q.Location[1],
 		dist, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *GeoDistanceQuery) Validate() error {
@@ -85,6 +87,7 @@ func (q *GeoDistanceQuery) UnmarshalJSON(data []byte) error {
 		Distance string      `json:"distance,omitempty"`
 		FieldVal string      `json:"field,omitempty"`
 		BoostVal *Boost      `json:"boost,omitempty"`
+		Name     string      `json:"name,omitempty"`
 	}{}
 	err := util.UnmarshalJSON(data, &tmp)
 	if err != nil {
@@ -99,5 +102,6 @@ func (q *GeoDistanceQuery) UnmarshalJSON(data []byte) error {
 	q.Distance = tmp.Distance
 	q.FieldVal = tmp.FieldVal
 	q.BoostVal = tmp.BoostVal
+	q.NameVal = tmp.Name
 	return nil
 }

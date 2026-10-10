@@ -33,6 +33,7 @@ type KNNQuery struct {
 	Vector      []float32 `json:"vector"`
 	K           int64     `json:"k"`
 	BoostVal    *Boost    `json:"boost,omitempty"`
+	NameMixin
 
 	// see KNNRequest.Params for description
 	Params json.RawMessage `json:"params"`
@@ -95,7 +96,8 @@ func (q *KNNQuery) Searcher(ctx context.Context, i index.IndexReader,
 		q.Vector = mapping.NormalizeVector(q.Vector)
 	}
 
-	return searcher.NewKNNSearcher(ctx, i, m, options, q.VectorField,
+	sr, err := searcher.NewKNNSearcher(ctx, i, m, options, q.VectorField,
 		q.Vector, q.K, q.BoostVal.Value(), similarityMetric, q.Params,
 		q.elegibleSelector)
+	return namedSearcher(sr, err, q.NameVal)
 }

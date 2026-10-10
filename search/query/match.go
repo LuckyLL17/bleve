@@ -32,6 +32,7 @@ type MatchQuery struct {
 	Prefix    int                `json:"prefix_length"`
 	Fuzziness int                `json:"fuzziness"`
 	Operator  MatchQueryOperator `json:"operator,omitempty"`
+	NameMixin
 	autoFuzzy bool
 }
 
@@ -170,19 +171,22 @@ func (q *MatchQuery) Searcher(ctx context.Context, i index.IndexReader, m mappin
 			shouldQuery := NewDisjunctionQuery(tqs)
 			shouldQuery.SetMin(1)
 			shouldQuery.SetBoost(q.BoostVal.Value())
-			return shouldQuery.Searcher(ctx, i, m, options)
+			sr, err := shouldQuery.Searcher(ctx, i, m, options)
+			return namedSearcher(sr, err, q.NameVal)
 
 		case MatchQueryOperatorAnd:
 			mustQuery := NewConjunctionQuery(tqs)
 			mustQuery.SetBoost(q.BoostVal.Value())
-			return mustQuery.Searcher(ctx, i, m, options)
+			sr, err := mustQuery.Searcher(ctx, i, m, options)
+			return namedSearcher(sr, err, q.NameVal)
 
 		default:
 			return nil, fmt.Errorf("unhandled operator %d", q.Operator)
 		}
 	}
 	noneQuery := NewMatchNoneQuery()
-	return noneQuery.Searcher(ctx, i, m, options)
+	sr, err := noneQuery.Searcher(ctx, i, m, options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *MatchQuery) UnmarshalJSON(data []byte) error {
@@ -222,6 +226,7 @@ func (f *MatchQuery) MarshalJSON() ([]byte, error) {
 		Prefix    int                `json:"prefix_length"`
 		Fuzziness interface{}        `json:"fuzziness"`
 		Operator  MatchQueryOperator `json:"operator,omitempty"`
+		NameVal   string             `json:"name,omitempty"`
 	}
 	aux := match{
 		Match:     f.Match,
@@ -231,6 +236,7 @@ func (f *MatchQuery) MarshalJSON() ([]byte, error) {
 		Prefix:    f.Prefix,
 		Fuzziness: fuzzyValue,
 		Operator:  f.Operator,
+		NameVal:   f.NameVal,
 	}
 	return util.MarshalJSON(aux)
 }

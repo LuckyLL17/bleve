@@ -182,6 +182,44 @@ type DocumentMatch struct {
 	// Descendants holds the IDs of any child/descendant document that contributed
 	// to this root DocumentMatch.
 	Descendants []index.IndexInternalID `json:"-"`
+
+	// HitNames is the sorted, de-duplicated set of stable names of the
+	// query clauses that matched this document. Only clauses assigned a
+	// name contribute entries; clauses inside a must_not branch never
+	// match a returned document, so their names do not appear here.
+	// It stays nil for queries without any named clauses, keeping the
+	// JSON shape of unnamed searches unchanged.
+	HitNames []string `json:"hit_names,omitempty"`
+}
+
+// AddHitName records that the named query clause matched this document.
+// The set is kept sorted and de-duplicated so that the serialized output
+// is stable regardless of the order in which clauses are evaluated.
+func (dm *DocumentMatch) AddHitName(name string) {
+	if name == "" {
+		return
+	}
+	pos, found := slices.BinarySearch(dm.HitNames, name)
+	if found {
+		return
+	}
+	dm.HitNames = append(dm.HitNames, "")
+	copy(dm.HitNames[pos+1:], dm.HitNames[pos:])
+	dm.HitNames[pos] = name
+}
+
+// MergeHitNamesFrom unions the matched clause names carried by the given
+// document matches into this one. All inputs are expected to be sorted and
+// de-duplicated, and the result remains sorted and de-duplicated.
+func (dm *DocumentMatch) MergeHitNamesFrom(matches ...*DocumentMatch) {
+	for _, other := range matches {
+		if other == nil {
+			continue
+		}
+		for _, name := range other.HitNames {
+			dm.AddHitName(name)
+		}
+	}
 }
 
 func (dm *DocumentMatch) AddFieldValue(name string, value interface{}) {
@@ -227,6 +265,7 @@ func (dm *DocumentMatch) Reset() *DocumentMatch {
 	sortBuf := dm.Sort
 	decodedSort := dm.DecodedSort
 	ftls := dm.FieldTermLocations
+	hitNames := dm.HitNames
 	for i := range ftls { // recycle the ArrayPositions of each location
 		ftls[i].Location.ArrayPositions = ftls[i].Location.ArrayPositions[:0]
 	}
@@ -257,6 +296,7 @@ func (dm *DocumentMatch) Reset() *DocumentMatch {
 	dm.FieldTermLocations = ftls[:0]
 	dm.Descendants = descendants[:0]
 	dm.ScoreBreakdown = scoreBreakdown
+	dm.HitNames = hitNames[:0]
 	return dm
 }
 
@@ -301,6 +341,10 @@ func (dm *DocumentMatch) Size() int {
 	for k := range dm.Fields {
 		sizeInBytes += size.SizeOfString + len(k) +
 			size.SizeOfPtr
+	}
+
+	for _, hitName := range dm.HitNames {
+		sizeInBytes += size.SizeOfString + len(hitName)
 	}
 
 	return sizeInBytes

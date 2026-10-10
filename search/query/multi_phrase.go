@@ -30,6 +30,7 @@ type MultiPhraseQuery struct {
 	FieldVal  string     `json:"field,omitempty"`
 	BoostVal  *Boost     `json:"boost,omitempty"`
 	Fuzziness int        `json:"fuzziness"`
+	NameMixin
 	autoFuzzy bool
 }
 
@@ -75,7 +76,9 @@ func (q *MultiPhraseQuery) SetField(f string) {
 }
 
 func (q *MultiPhraseQuery) Searcher(ctx context.Context, i index.IndexReader, m mapping.IndexMapping, options search.SearcherOptions) (search.Searcher, error) {
-	return searcher.NewMultiPhraseSearcher(ctx, i, q.Terms, q.Fuzziness, q.autoFuzzy, q.FieldVal, q.BoostVal.Value(), options)
+	sr, err := searcher.NewMultiPhraseSearcher(ctx, i, q.Terms, q.Fuzziness,
+		q.autoFuzzy, q.FieldVal, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *MultiPhraseQuery) Validate() error {
@@ -119,12 +122,14 @@ func (f *MultiPhraseQuery) MarshalJSON() ([]byte, error) {
 		FieldVal  string      `json:"field,omitempty"`
 		BoostVal  *Boost      `json:"boost,omitempty"`
 		Fuzziness interface{} `json:"fuzziness"`
+		NameVal   string      `json:"name,omitempty"`
 	}
 	aux := multiPhraseQuery{
 		Terms:     f.Terms,
 		FieldVal:  f.FieldVal,
 		BoostVal:  f.BoostVal,
 		Fuzziness: fuzzyValue,
+		NameVal:   f.NameVal,
 	}
 	return util.MarshalJSON(aux)
 }

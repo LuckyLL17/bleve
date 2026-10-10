@@ -31,7 +31,8 @@ type MatchPhraseQuery struct {
 	Analyzer    string `json:"analyzer,omitempty"`
 	BoostVal    *Boost `json:"boost,omitempty"`
 	Fuzziness   int    `json:"fuzziness"`
-	autoFuzzy   bool
+	NameMixin
+	autoFuzzy bool
 }
 
 // NewMatchPhraseQuery creates a new Query object
@@ -100,10 +101,12 @@ func (q *MatchPhraseQuery) Searcher(ctx context.Context, i index.IndexReader, m 
 		} else {
 			phraseQuery.SetFuzziness(q.Fuzziness)
 		}
-		return phraseQuery.Searcher(ctx, i, m, options)
+		sr, err := phraseQuery.Searcher(ctx, i, m, options)
+		return namedSearcher(sr, err, q.NameVal)
 	}
 	noneQuery := NewMatchNoneQuery()
-	return noneQuery.Searcher(ctx, i, m, options)
+	sr, err := noneQuery.Searcher(ctx, i, m, options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func tokenStreamToPhrase(tokens analysis.TokenStream) [][]string {
@@ -164,6 +167,7 @@ func (f *MatchPhraseQuery) MarshalJSON() ([]byte, error) {
 		Analyzer    string      `json:"analyzer,omitempty"`
 		BoostVal    *Boost      `json:"boost,omitempty"`
 		Fuzziness   interface{} `json:"fuzziness"`
+		NameVal     string      `json:"name,omitempty"`
 	}
 	aux := matchPhrase{
 		MatchPhrase: f.MatchPhrase,
@@ -171,6 +175,7 @@ func (f *MatchPhraseQuery) MarshalJSON() ([]byte, error) {
 		Analyzer:    f.Analyzer,
 		BoostVal:    f.BoostVal,
 		Fuzziness:   fuzzyValue,
+		NameVal:     f.NameVal,
 	}
 	return util.MarshalJSON(aux)
 }

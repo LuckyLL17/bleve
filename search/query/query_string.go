@@ -25,6 +25,7 @@ import (
 type QueryStringQuery struct {
 	Query    string `json:"query"`
 	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewQueryStringQuery creates a new Query used for
@@ -54,7 +55,8 @@ func (q *QueryStringQuery) Searcher(ctx context.Context, i index.IndexReader, m 
 	if err != nil {
 		return nil, err
 	}
-	return newQuery.Searcher(ctx, i, m, options)
+	sr, err := newQuery.Searcher(ctx, i, m, options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *QueryStringQuery) Validate() error {

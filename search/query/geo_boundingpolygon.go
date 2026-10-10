@@ -30,6 +30,7 @@ type GeoBoundingPolygonQuery struct {
 	Points   []geo.Point `json:"polygon_points"`
 	FieldVal string      `json:"field,omitempty"`
 	BoostVal *Boost      `json:"boost,omitempty"`
+	NameMixin
 }
 
 func NewGeoBoundingPolygonQuery(points []geo.Point) *GeoBoundingPolygonQuery {
@@ -63,7 +64,9 @@ func (q *GeoBoundingPolygonQuery) Searcher(ctx context.Context, i index.IndexRea
 
 	ctx = context.WithValue(ctx, search.QueryTypeKey, search.Geo)
 
-	return searcher.NewGeoBoundedPolygonSearcher(ctx, i, q.Points, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewGeoBoundedPolygonSearcher(ctx, i, q.Points, field,
+		q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *GeoBoundingPolygonQuery) Validate() error {
@@ -75,6 +78,7 @@ func (q *GeoBoundingPolygonQuery) UnmarshalJSON(data []byte) error {
 		Points   []interface{} `json:"polygon_points"`
 		FieldVal string        `json:"field,omitempty"`
 		BoostVal *Boost        `json:"boost,omitempty"`
+		Name     string        `json:"name,omitempty"`
 	}{}
 	err := util.UnmarshalJSON(data, &tmp)
 	if err != nil {
@@ -93,5 +97,6 @@ func (q *GeoBoundingPolygonQuery) UnmarshalJSON(data []byte) error {
 
 	q.FieldVal = tmp.FieldVal
 	q.BoostVal = tmp.BoostVal
+	q.NameVal = tmp.Name
 	return nil
 }

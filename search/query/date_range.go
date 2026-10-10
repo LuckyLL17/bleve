@@ -91,6 +91,7 @@ type DateRangeQuery struct {
 	InclusiveEnd   *bool          `json:"inclusive_end,omitempty"`
 	FieldVal       string         `json:"field,omitempty"`
 	BoostVal       *Boost         `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewDateRangeQuery creates a new Query for ranges
@@ -145,7 +146,9 @@ func (q *DateRangeQuery) Searcher(ctx context.Context, i index.IndexReader, m ma
 		field = m.DefaultSearchField()
 	}
 
-	return searcher.NewNumericRangeSearcher(ctx, i, min, max, q.InclusiveStart, q.InclusiveEnd, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewNumericRangeSearcher(ctx, i, min, max, q.InclusiveStart,
+		q.InclusiveEnd, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *DateRangeQuery) parseEndpoints() (*float64, *float64, error) {

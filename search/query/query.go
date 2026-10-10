@@ -68,6 +68,16 @@ type ValidatableQuery interface {
 	Validate() error
 }
 
+// namedSearcher wraps a successfully built searcher with the optional
+// stable clause name. Errors, nil searchers and empty names pass through
+// untouched so unnamed searches behave exactly as before.
+func namedSearcher(s search.Searcher, err error, name string) (search.Searcher, error) {
+	if err != nil || name == "" || s == nil {
+		return s, err
+	}
+	return searcher.NewNamedSearcher(s, name), nil
+}
+
 // ParsePreSearchData deserializes a JSON representation of
 // a PreSearchData object.
 func ParsePreSearchData(input []byte) (map[string]interface{}, error) {

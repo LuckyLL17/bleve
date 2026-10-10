@@ -27,11 +27,12 @@ import (
 )
 
 type BooleanQuery struct {
-	Must            Query  `json:"must,omitempty"`
-	Should          Query  `json:"should,omitempty"`
-	MustNot         Query  `json:"must_not,omitempty"`
-	Filter          Query  `json:"filter,omitempty"`
-	BoostVal        *Boost `json:"boost,omitempty"`
+	Must     Query  `json:"must,omitempty"`
+	Should   Query  `json:"should,omitempty"`
+	MustNot  Query  `json:"must_not,omitempty"`
+	Filter   Query  `json:"filter,omitempty"`
+	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 	queryStringMode bool
 }
 
@@ -215,23 +216,30 @@ func (q *BooleanQuery) Searcher(ctx context.Context, i index.IndexReader, m mapp
 				cmp = refDoc.IndexInternalID.Compare(d.IndexInternalID)
 			}
 			// cmp >= 0: either equal (match) or filterSearcher is ahead (no match)
-			return cmp == 0
+			matched := cmp == 0
+			if matched {
+				// the filter branch matched this document, so surface the
+				// names of the filter clauses that matched
+				d.MergeHitNamesFrom(refDoc)
+			}
+			return matched
 		}
 	}
 
 	// if all 4 are nil, return MatchNone
 	if mustSearcher == nil && shouldSearcher == nil && mustNotSearcher == nil && filterFunc == nil {
-		return searcher.NewMatchNoneSearcher(i)
+		sr, sErr := searcher.NewMatchNoneSearcher(i)
+		return namedSearcher(sr, sErr, q.NameVal)
 	}
 
 	// optimization, if only must searcher, just return it instead
 	if mustSearcher != nil && shouldSearcher == nil && mustNotSearcher == nil && filterFunc == nil {
-		return mustSearcher, nil
+		return namedSearcher(mustSearcher, nil, q.NameVal)
 	}
 
 	// optimization, if only should searcher, just return it instead
 	if mustSearcher == nil && shouldSearcher != nil && mustNotSearcher == nil && filterFunc == nil {
-		return shouldSearcher, nil
+		return namedSearcher(shouldSearcher, nil, q.NameVal)
 	}
 
 	// optimization, if only filter searcher, wrap around a MatchAllSearcher
@@ -240,10 +248,11 @@ func (q *BooleanQuery) Searcher(ctx context.Context, i index.IndexReader, m mapp
 		if err != nil {
 			return nil, err
 		}
-		return searcher.NewFilteringSearcher(ctx,
+		rv := searcher.NewFilteringSearcher(ctx,
 			mustSearcher,
 			filterFunc,
-		), nil
+		)
+		return namedSearcher(rv, nil, q.NameVal)
 	}
 
 	// if only mustNotSearcher, start with MatchAll
@@ -260,9 +269,9 @@ func (q *BooleanQuery) Searcher(ctx context.Context, i index.IndexReader, m mapp
 	}
 
 	if filterFunc != nil {
-		return searcher.NewFilteringSearcher(ctx, bs, filterFunc), nil
+		return namedSearcher(searcher.NewFilteringSearcher(ctx, bs, filterFunc), nil, q.NameVal)
 	}
-	return bs, nil
+	return namedSearcher(bs, nil, q.NameVal)
 }
 
 func (q *BooleanQuery) Validate() error {
@@ -303,6 +312,7 @@ func (q *BooleanQuery) UnmarshalJSON(data []byte) error {
 		MustNot json.RawMessage `json:"must_not,omitempty"`
 		Filter  json.RawMessage `json:"filter,omitempty"`
 		Boost   *Boost          `json:"boost,omitempty"`
+		Name    string          `json:"name,omitempty"`
 	}{}
 	err := util.UnmarshalJSON(data, &tmp)
 	if err != nil {
@@ -350,6 +360,7 @@ func (q *BooleanQuery) UnmarshalJSON(data []byte) error {
 	}
 
 	q.BoostVal = tmp.Boost
+	q.NameVal = tmp.Name
 
 	return nil
 }

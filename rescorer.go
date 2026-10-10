@@ -135,6 +135,7 @@ func (r *rescorer) mergeDocs(ftsHits, knnHits search.DocumentMatchCollection) se
 	for _, hit := range ftsHits {
 		if knnHit, ok := knnHitMap[hit.ID]; ok {
 			hit.ScoreBreakdown = knnHit.ScoreBreakdown
+			hit.MergeHitNamesFrom(knnHit)
 			if r.req.Explain {
 				hit.Expl = &search.Explanation{Value: 0.0, Message: "", Children: append([]*search.Explanation{hit.Expl}, knnHit.Expl.Children...)}
 			}

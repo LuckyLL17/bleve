@@ -27,6 +27,7 @@ type TermQuery struct {
 	Term     string `json:"term"`
 	FieldVal string `json:"field,omitempty"`
 	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewTermQuery creates a new Query for finding an
@@ -59,5 +60,6 @@ func (q *TermQuery) Searcher(ctx context.Context, i index.IndexReader, m mapping
 	if q.FieldVal == "" {
 		field = m.DefaultSearchField()
 	}
-	return searcher.NewTermSearcher(ctx, i, q.Term, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewTermSearcher(ctx, i, q.Term, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }

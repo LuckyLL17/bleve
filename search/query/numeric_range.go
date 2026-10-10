@@ -31,6 +31,7 @@ type NumericRangeQuery struct {
 	InclusiveMax *bool    `json:"inclusive_max,omitempty"`
 	FieldVal     string   `json:"field,omitempty"`
 	BoostVal     *Boost   `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewNumericRangeQuery creates a new Query for ranges
@@ -78,7 +79,9 @@ func (q *NumericRangeQuery) Searcher(ctx context.Context, i index.IndexReader, m
 		field = m.DefaultSearchField()
 	}
 	ctx = context.WithValue(ctx, search.QueryTypeKey, search.Numeric)
-	return searcher.NewNumericRangeSearcher(ctx, i, q.Min, q.Max, q.InclusiveMin, q.InclusiveMax, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewNumericRangeSearcher(ctx, i, q.Min, q.Max, q.InclusiveMin,
+		q.InclusiveMax, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *NumericRangeQuery) Validate() error {

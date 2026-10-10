@@ -27,6 +27,7 @@ type BoolFieldQuery struct {
 	Bool     bool   `json:"bool"`
 	FieldVal string `json:"field,omitempty"`
 	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewBoolFieldQuery creates a new Query for boolean fields
@@ -62,5 +63,6 @@ func (q *BoolFieldQuery) Searcher(ctx context.Context, i index.IndexReader, m ma
 	if q.Bool {
 		term = "T"
 	}
-	return searcher.NewTermSearcher(ctx, i, term, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewTermSearcher(ctx, i, term, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }

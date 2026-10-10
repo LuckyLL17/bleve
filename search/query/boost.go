@@ -31,3 +31,28 @@ func (b *Boost) GoString() string {
 	}
 	return fmt.Sprintf("%f", *b)
 }
+
+// NameMixin gives a query clause an optional stable name. Named clauses
+// report their name in the hit_names set of every document they match;
+// the name is serialized as the "name" JSON key and omitted when unset,
+// so unnamed queries keep their original JSON shape.
+type NameMixin struct {
+	NameVal string `json:"name,omitempty"`
+}
+
+// SetName assigns the stable name of the query clause.
+func (q *NameMixin) SetName(name string) {
+	q.NameVal = name
+}
+
+// Name returns the stable name of the query clause, "" when unnamed.
+func (q *NameMixin) Name() string {
+	return q.NameVal
+}
+
+// NamedQuery is implemented by queries carrying an optional stable name.
+type NamedQuery interface {
+	Query
+	SetName(name string)
+	Name() string
+}

@@ -47,6 +47,7 @@ type WildcardQuery struct {
 	Wildcard string `json:"wildcard"`
 	FieldVal string `json:"field,omitempty"`
 	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewWildcardQuery creates a new Query which finds
@@ -85,8 +86,9 @@ func (q *WildcardQuery) Searcher(ctx context.Context, i index.IndexReader, m map
 
 	regexpString := wildcardRegexpReplacer.Replace(q.Wildcard)
 
-	return searcher.NewRegexpStringSearcher(ctx, i, regexpString, field,
+	sr, err := searcher.NewRegexpStringSearcher(ctx, i, regexpString, field,
 		q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *WildcardQuery) Validate() error {

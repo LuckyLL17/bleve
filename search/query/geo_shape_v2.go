@@ -29,6 +29,7 @@ type GeoShapeV2Query struct {
 	GeometryV2 Geometry `json:"geometry_v2,omitempty"`
 	FieldVal   string   `json:"field,omitempty"`
 	BoostVal   *Boost   `json:"boost,omitempty"`
+	NameMixin
 }
 
 func NewGeoShapeV2Query(coordinates [][][][]float64, typ,
@@ -102,6 +103,7 @@ func (q *GeoShapeV2Query) Searcher(ctx context.Context,
 
 	ctx = context.WithValue(ctx, search.QueryTypeKey, search.Geo)
 
-	return searcher.NewGeoShapeV2Searcher(ctx, i, q.GeometryV2.Shape,
+	sr, err := searcher.NewGeoShapeV2Searcher(ctx, i, q.GeometryV2.Shape,
 		q.GeometryV2.Relation, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }

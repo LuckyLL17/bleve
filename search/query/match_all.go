@@ -26,6 +26,7 @@ import (
 
 type MatchAllQuery struct {
 	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewMatchAllQuery creates a Query which will
@@ -44,13 +45,17 @@ func (q *MatchAllQuery) Boost() float64 {
 }
 
 func (q *MatchAllQuery) Searcher(ctx context.Context, i index.IndexReader, m mapping.IndexMapping, options search.SearcherOptions) (search.Searcher, error) {
-	return searcher.NewMatchAllSearcher(ctx, i, q.BoostVal.Value(), options)
+	sr, err := searcher.NewMatchAllSearcher(ctx, i, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *MatchAllQuery) MarshalJSON() ([]byte, error) {
 	tmp := map[string]interface{}{
 		"boost":     q.BoostVal,
 		"match_all": map[string]interface{}{},
+	}
+	if q.NameVal != "" {
+		tmp["name"] = q.NameVal
 	}
 	return json.Marshal(tmp)
 }

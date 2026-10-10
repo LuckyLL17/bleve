@@ -29,6 +29,7 @@ type IPRangeQuery struct {
 	CIDR     string `json:"cidr,omitempty"`
 	FieldVal string `json:"field,omitempty"`
 	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 func NewIPRangeQuery(cidr string) *IPRangeQuery {
@@ -66,9 +67,11 @@ func (q *IPRangeQuery) Searcher(ctx context.Context, i index.IndexReader, m mapp
 			return nil, err
 		}
 		// If we are searching for a specific ip rather than members of a network, just use a term search.
-		return searcher.NewTermSearcherBytes(ctx, i, ip.To16(), field, q.BoostVal.Value(), options)
+		sr, sErr := searcher.NewTermSearcherBytes(ctx, i, ip.To16(), field, q.BoostVal.Value(), options)
+		return namedSearcher(sr, sErr, q.NameVal)
 	}
-	return searcher.NewIPRangeSearcher(ctx, i, ipNet, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewIPRangeSearcher(ctx, i, ipNet, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *IPRangeQuery) Validate() error {

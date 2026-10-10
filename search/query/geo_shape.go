@@ -35,6 +35,7 @@ type GeoShapeQuery struct {
 	Geometry Geometry `json:"geometry"`
 	FieldVal string   `json:"field,omitempty"`
 	BoostVal *Boost   `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewGeoShapeQuery creates a geoshape query for the
@@ -110,8 +111,9 @@ func (q *GeoShapeQuery) Searcher(ctx context.Context, i index.IndexReader,
 
 	ctx = context.WithValue(ctx, search.QueryTypeKey, search.Geo)
 
-	return searcher.NewGeoShapeSearcher(ctx, i, q.Geometry.Shape, q.Geometry.Relation, field,
-		q.BoostVal.Value(), options)
+	sr, err := searcher.NewGeoShapeSearcher(ctx, i, q.Geometry.Shape, q.Geometry.Relation,
+		field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *GeoShapeQuery) Validate() error {

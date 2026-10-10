@@ -30,6 +30,7 @@ type PhraseQuery struct {
 	FieldVal  string   `json:"field,omitempty"`
 	BoostVal  *Boost   `json:"boost,omitempty"`
 	Fuzziness int      `json:"fuzziness"`
+	NameMixin
 	autoFuzzy bool
 }
 
@@ -72,7 +73,9 @@ func (q *PhraseQuery) Field() string {
 }
 
 func (q *PhraseQuery) Searcher(ctx context.Context, i index.IndexReader, m mapping.IndexMapping, options search.SearcherOptions) (search.Searcher, error) {
-	return searcher.NewPhraseSearcher(ctx, i, q.Terms, q.Fuzziness, q.autoFuzzy, q.FieldVal, q.BoostVal.Value(), options)
+	sr, err := searcher.NewPhraseSearcher(ctx, i, q.Terms, q.Fuzziness, q.autoFuzzy,
+		q.FieldVal, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *PhraseQuery) Validate() error {
@@ -116,12 +119,14 @@ func (f *PhraseQuery) MarshalJSON() ([]byte, error) {
 		FieldVal  string      `json:"field,omitempty"`
 		BoostVal  *Boost      `json:"boost,omitempty"`
 		Fuzziness interface{} `json:"fuzziness"`
+		NameVal   string      `json:"name,omitempty"`
 	}
 	aux := phraseQuery{
 		Terms:     f.Terms,
 		FieldVal:  f.FieldVal,
 		BoostVal:  f.BoostVal,
 		Fuzziness: fuzzyValue,
+		NameVal:   f.NameVal,
 	}
 	return util.MarshalJSON(aux)
 }

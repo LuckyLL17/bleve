@@ -30,6 +30,7 @@ type FuzzyQuery struct {
 	Fuzziness int    `json:"fuzziness"`
 	FieldVal  string `json:"field,omitempty"`
 	BoostVal  *Boost `json:"boost,omitempty"`
+	NameMixin
 	autoFuzzy bool
 }
 
@@ -82,9 +83,13 @@ func (q *FuzzyQuery) Searcher(ctx context.Context, i index.IndexReader, m mappin
 		field = m.DefaultSearchField()
 	}
 	if q.autoFuzzy {
-		return searcher.NewAutoFuzzySearcher(ctx, i, q.Term, q.Prefix, field, q.BoostVal.Value(), options)
+		sr, err := searcher.NewAutoFuzzySearcher(ctx, i, q.Term, q.Prefix, field,
+			q.BoostVal.Value(), options)
+		return namedSearcher(sr, err, q.NameVal)
 	}
-	return searcher.NewFuzzySearcher(ctx, i, q.Term, q.Prefix, q.Fuzziness, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewFuzzySearcher(ctx, i, q.Term, q.Prefix, q.Fuzziness, field,
+		q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *FuzzyQuery) UnmarshalJSON(data []byte) error {
@@ -122,6 +127,7 @@ func (f *FuzzyQuery) MarshalJSON() ([]byte, error) {
 		Fuzziness interface{} `json:"fuzziness"`
 		FieldVal  string      `json:"field,omitempty"`
 		BoostVal  *Boost      `json:"boost,omitempty"`
+		NameVal   string      `json:"name,omitempty"`
 	}
 	aux := fuzzyQuery{
 		Term:      f.Term,
@@ -129,6 +135,7 @@ func (f *FuzzyQuery) MarshalJSON() ([]byte, error) {
 		Fuzziness: fuzzyValue,
 		FieldVal:  f.FieldVal,
 		BoostVal:  f.BoostVal,
+		NameVal:   f.NameVal,
 	}
 	return util.MarshalJSON(aux)
 }

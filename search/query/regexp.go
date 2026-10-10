@@ -28,6 +28,7 @@ type RegexpQuery struct {
 	Regexp   string `json:"regexp"`
 	FieldVal string `json:"field,omitempty"`
 	BoostVal *Boost `json:"boost,omitempty"`
+	NameMixin
 }
 
 // NewRegexpQuery creates a new Query which finds
@@ -71,7 +72,9 @@ func (q *RegexpQuery) Searcher(ctx context.Context, i index.IndexReader, m mappi
 	actualRegexp := q.Regexp
 	actualRegexp = strings.TrimPrefix(actualRegexp, "^") // remove leading ^ if it exists
 
-	return searcher.NewRegexpStringSearcher(ctx, i, actualRegexp, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewRegexpStringSearcher(ctx, i, actualRegexp, field,
+		q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *RegexpQuery) Validate() error {

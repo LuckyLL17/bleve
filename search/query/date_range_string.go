@@ -40,6 +40,7 @@ type DateRangeStringQuery struct {
 	FieldVal       string `json:"field,omitempty"`
 	BoostVal       *Boost `json:"boost,omitempty"`
 	DateTimeParser string `json:"datetime_parser,omitempty"`
+	NameMixin
 }
 
 // NewDateRangeStringQuery creates a new Query for ranges
@@ -129,7 +130,9 @@ func (q *DateRangeStringQuery) Searcher(ctx context.Context, i index.IndexReader
 	if err != nil {
 		return nil, err
 	}
-	return searcher.NewNumericRangeSearcher(ctx, i, min, max, q.InclusiveStart, q.InclusiveEnd, field, q.BoostVal.Value(), options)
+	sr, err := searcher.NewNumericRangeSearcher(ctx, i, min, max, q.InclusiveStart,
+		q.InclusiveEnd, field, q.BoostVal.Value(), options)
+	return namedSearcher(sr, err, q.NameVal)
 }
 
 func (q *DateRangeStringQuery) parseEndpoints(startTime, endTime time.Time) (*float64, *float64, error) {

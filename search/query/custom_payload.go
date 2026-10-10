@@ -23,57 +23,65 @@ import (
 	index "github.com/blevesearch/bleve_index_api"
 )
 
-func unmarshalCustomQueryPayload(data []byte, key string) (Query, []string, map[string]interface{}, error) {
+func unmarshalCustomQueryPayload(data []byte, key string) (Query, []string, string, map[string]interface{}, error) {
 	tmp := map[string]json.RawMessage{}
 	err := util.UnmarshalJSON(data, &tmp)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, "", nil, err
 	}
 
 	innerRaw, ok := tmp[key]
 	if !ok || innerRaw == nil {
-		return nil, nil, nil, nil
+		return nil, nil, "", nil, nil
 	}
 
 	var inner map[string]json.RawMessage
 	err = util.UnmarshalJSON(innerRaw, &inner)
 	if err != nil || inner == nil {
-		return nil, nil, nil, fmt.Errorf("%s query must be a JSON object", key)
+		return nil, nil, "", nil, fmt.Errorf("%s query must be a JSON object", key)
 	}
 
 	var child Query
 	if childQuery, ok := inner["query"]; ok && childQuery != nil {
 		child, err = ParseQuery(childQuery)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, "", nil, err
 		}
 	}
 
 	var fields []string
 	if rawFields, ok := inner["fields"]; ok && rawFields != nil {
 		if err := util.UnmarshalJSON(rawFields, &fields); err != nil {
-			return nil, nil, nil, fmt.Errorf("%s query has invalid %q: %w",
+			return nil, nil, "", nil, fmt.Errorf("%s query has invalid %q: %w",
 				key, "fields", err)
+		}
+	}
+
+	var name string
+	if rawName, ok := inner["name"]; ok && rawName != nil {
+		if err := util.UnmarshalJSON(rawName, &name); err != nil {
+			return nil, nil, "", nil, fmt.Errorf("%s query has invalid %q: %w",
+				key, "name", err)
 		}
 	}
 
 	payload := make(map[string]interface{}, len(inner))
 	for k, raw := range inner {
-		if k == "query" || k == "fields" {
+		if k == "query" || k == "fields" || k == "name" {
 			continue
 		}
 		var v interface{}
 		if raw != nil {
 			err = util.UnmarshalJSON(raw, &v)
 			if err != nil {
-				return nil, nil, nil, fmt.Errorf("%s query has invalid %q payload: %w",
+				return nil, nil, "", nil, fmt.Errorf("%s query has invalid %q payload: %w",
 					key, k, err)
 			}
 		}
 		payload[k] = v
 	}
 
-	return child, fields, payload, nil
+	return child, fields, name, payload, nil
 }
 
 // resolveFieldTypes looks up each field name in the index mapping and returns

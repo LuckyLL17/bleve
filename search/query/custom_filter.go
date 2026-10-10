@@ -30,6 +30,7 @@ import (
 type CustomFilterQuery struct {
 	Query  Query    `json:"query"`
 	Fields []string `json:"fields,omitempty"`
+	NameMixin
 
 	filterFunc searcher.CustomFilterFunc
 	payload    map[string]interface{}
@@ -92,7 +93,8 @@ func (q *CustomFilterQuery) Searcher(ctx context.Context, i index.IndexReader, m
 		fieldTypes = resolveFieldTypes(fields, m)
 	}
 
-	return searcher.NewCustomFilterSearcher(ctx, childSearcher, q.filterFunc, dvReader, i, fieldTypes), nil
+	return namedSearcher(searcher.NewCustomFilterSearcher(ctx, childSearcher,
+		q.filterFunc, dvReader, i, fieldTypes), nil, q.NameVal)
 }
 
 func (q *CustomFilterQuery) Validate() error {
@@ -112,7 +114,7 @@ func (q *CustomFilterQuery) Validate() error {
 }
 
 func (q *CustomFilterQuery) MarshalJSON() ([]byte, error) {
-	inner := make(map[string]interface{}, len(q.payload)+2)
+	inner := make(map[string]interface{}, len(q.payload)+3)
 	for k, v := range q.payload {
 		inner[k] = v
 	}
@@ -120,18 +122,22 @@ func (q *CustomFilterQuery) MarshalJSON() ([]byte, error) {
 	if len(q.Fields) > 0 {
 		inner["fields"] = q.Fields
 	}
+	if q.NameVal != "" {
+		inner["name"] = q.NameVal
+	}
 	return json.Marshal(map[string]interface{}{
 		"custom_filter": inner,
 	})
 }
 
 func (q *CustomFilterQuery) UnmarshalJSON(data []byte) error {
-	child, fields, payload, err := unmarshalCustomQueryPayload(data, "custom_filter")
+	child, fields, name, payload, err := unmarshalCustomQueryPayload(data, "custom_filter")
 	if err != nil {
 		return err
 	}
 	q.Query = child
 	q.Fields = fields
+	q.NameVal = name
 	q.payload = payload
 	return nil
 }

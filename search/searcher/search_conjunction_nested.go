@@ -467,6 +467,7 @@ func (cq *CoalesceQueue) Dequeue(ctx *search.SearchContext) *search.DocumentMatc
 		rv.Expl = rv.Expl.MergeWith(next.Expl)
 		rv.FieldTermLocations = search.MergeFieldTermLocationsFromMatch(
 			rv.FieldTermLocations, next)
+		rv.MergeHitNamesFrom(next)
 		// recycle the merged item
 		ctx.DocumentMatchPool.Put(next)
 	}
